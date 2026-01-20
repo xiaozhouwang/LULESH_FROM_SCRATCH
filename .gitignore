@@ -3,4 +3,8 @@
 lulesh2.0
 
 benchmarks/logs/
+benchmarks/logs-gpu/
 benchmarks/*.txt
+
+lulesh-gpu/
+lulesh-gpu-opt/
