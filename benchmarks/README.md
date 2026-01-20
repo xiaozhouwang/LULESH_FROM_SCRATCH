@@ -50,6 +50,15 @@ python3 benchmarks/bench_speedup.py --sizes 30,50,70,90,110 --iterations 100 --c
 
 Outputs `benchmarks/speedup.csv` and `benchmarks/speedup.png`.
 
+## Plot correctness deltas
+
+```
+python3 benchmarks/plot_correctness.py --plot
+```
+
+Outputs `benchmarks/correctness.csv`, `benchmarks/correctness_steps.csv`,
+and `benchmarks/correctness.png` from the current log roots.
+
 Override tolerances if needed:
 
 ```
