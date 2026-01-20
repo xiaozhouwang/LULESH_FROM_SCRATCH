@@ -154,14 +154,430 @@ Additional BSD Notice
 #include <sys/time.h>
 #include <iostream>
 #include <unistd.h>
+#include <set>
+#include <sstream>
 
 #if _OPENMP
 # include <omp.h>
 #endif
 
 #include "lulesh.h"
+#include "lulesh-log.h"
 
 /* Work Routines */
+
+static int g_myRank = 0;
+static int g_numRanks = 1;
+static cmdLineOpts g_cmdline_opts;
+static bool g_cmdline_opts_set = false;
+
+struct LogConfig {
+   bool enabled;
+   bool log_pre;
+   Index_t stride;
+   std::string root;
+   std::set<std::string> fields;
+
+   LogConfig()
+      : enabled(false),
+        log_pre(false),
+        stride(1),
+        root(lulesh_log::DefaultLogRoot())
+   {
+   }
+};
+
+static bool EnvEnabled(const char* name)
+{
+   const char* value = getenv(name);
+   if (value == NULL || value[0] == '\0') {
+      return false;
+   }
+   return strcmp(value, "0") != 0;
+}
+
+static Index_t ParseStride(const char* name)
+{
+   const char* value = getenv(name);
+   if (value == NULL || value[0] == '\0') {
+      return 1;
+   }
+   char* end = NULL;
+   long parsed = strtol(value, &end, 10);
+   if (end == value || parsed <= 0) {
+      return 1;
+   }
+   if (parsed > std::numeric_limits<Index_t>::max()) {
+      return 1;
+   }
+   return static_cast<Index_t>(parsed);
+}
+
+static std::string TrimCopy(const std::string& input)
+{
+   std::string result = input;
+   std::string::size_type start = result.find_first_not_of(" \t\r\n");
+   if (start == std::string::npos) {
+      return "";
+   }
+   std::string::size_type end = result.find_last_not_of(" \t\r\n");
+   result = result.substr(start, end - start + 1);
+   return result;
+}
+
+static std::set<std::string> ParseFields()
+{
+   std::set<std::string> fields;
+   const char* value = getenv("LULESH_LOG_FIELDS");
+   if (value == NULL || value[0] == '\0') {
+      return fields;
+   }
+   std::string raw = TrimCopy(value);
+   if (raw.empty() || raw == "all") {
+      return fields;
+   }
+   std::string::size_type start = 0;
+   while (start < raw.size()) {
+      std::string::size_type comma = raw.find(',', start);
+      std::string token = raw.substr(start,
+                                     (comma == std::string::npos) ? std::string::npos
+                                                                  : comma - start);
+      token = TrimCopy(token);
+      if (!token.empty()) {
+         fields.insert(token);
+      }
+      if (comma == std::string::npos) {
+         break;
+      }
+      start = comma + 1;
+   }
+   return fields;
+}
+
+static const LogConfig& GetLogConfig()
+{
+   static LogConfig cfg;
+   static bool initialized = false;
+   if (!initialized) {
+      cfg.enabled = EnvEnabled("LULESH_LOG_ENABLE");
+      cfg.log_pre = EnvEnabled("LULESH_LOG_PRE");
+      cfg.stride = ParseStride("LULESH_LOG_STRIDE");
+      cfg.fields = ParseFields();
+      const char* root = getenv("LULESH_LOG_ROOT");
+      if (root != NULL && root[0] != '\0') {
+         cfg.root = root;
+      }
+      initialized = true;
+   }
+   return cfg;
+}
+
+static bool ShouldLogField(const LogConfig& cfg, const std::string& name)
+{
+   if (cfg.fields.empty()) {
+      return true;
+   }
+   return cfg.fields.find(name) != cfg.fields.end();
+}
+
+static bool ShouldLogStep(const LogConfig& cfg, Domain& domain)
+{
+   return cfg.enabled && domain.cycle() == 1;
+}
+
+static std::string JoinCsvPath(const std::string& dir, const std::string& name)
+{
+   return lulesh_log::JoinPath(dir, name + ".csv");
+}
+
+static std::string GetGitHash()
+{
+#ifdef LULESH_GIT_HASH
+   return LULESH_GIT_HASH;
+#else
+   const char* value = getenv("LULESH_GIT_HASH");
+   if (value != NULL && value[0] != '\0') {
+      return value;
+   }
+   return "unknown";
+#endif
+}
+
+static std::string GetEnvString(const char* name)
+{
+   const char* value = getenv(name);
+   if (value != NULL) {
+      return value;
+   }
+   return "";
+}
+
+static void WriteInfoFile(const LogConfig& cfg,
+                          Domain& domain,
+                          const std::string& step_name,
+                          const std::string& info_dir)
+{
+   std::string info_path = lulesh_log::JoinPath(info_dir, "info.md");
+   std::ofstream out(info_path.c_str());
+   if (!out) {
+      return;
+   }
+
+   time_t now = time(NULL);
+   char time_buf[64];
+   tm* utc = gmtime(&now);
+   if (utc != NULL) {
+      strftime(time_buf, sizeof(time_buf), "%Y-%m-%dT%H:%M:%SZ", utc);
+   } else {
+      strcpy(time_buf, "unknown");
+   }
+
+   out << "step: " << step_name << "\n";
+   out << "timestamp_utc: " << time_buf << "\n";
+   out << "rank: " << g_myRank << "\n";
+   out << "numRanks: " << g_numRanks << "\n";
+#if _OPENMP
+   out << "omp_max_threads: " << omp_get_max_threads() << "\n";
+#else
+   out << "omp_max_threads: 1\n";
+#endif
+   out << "omp_env_threads: " << GetEnvString("OMP_NUM_THREADS") << "\n";
+
+   if (g_cmdline_opts_set) {
+      out << "nx: " << g_cmdline_opts.nx << "\n";
+      out << "its: " << g_cmdline_opts.its << "\n";
+      out << "numReg: " << g_cmdline_opts.numReg << "\n";
+      out << "numFiles: " << g_cmdline_opts.numFiles << "\n";
+      out << "showProg: " << g_cmdline_opts.showProg << "\n";
+      out << "quiet: " << g_cmdline_opts.quiet << "\n";
+      out << "viz: " << g_cmdline_opts.viz << "\n";
+      out << "cost: " << g_cmdline_opts.cost << "\n";
+      out << "balance: " << g_cmdline_opts.balance << "\n";
+   }
+
+   out << "sizeX: " << domain.sizeX() << "\n";
+   out << "sizeY: " << domain.sizeY() << "\n";
+   out << "sizeZ: " << domain.sizeZ() << "\n";
+   out << "colLoc: " << domain.colLoc() << "\n";
+   out << "rowLoc: " << domain.rowLoc() << "\n";
+   out << "planeLoc: " << domain.planeLoc() << "\n";
+   out << "tp: " << domain.tp() << "\n";
+   out << "numElem: " << domain.numElem() << "\n";
+   out << "numNode: " << domain.numNode() << "\n";
+   out << "Real_t_bytes: " << sizeof(Real_t) << "\n";
+   out << "Real_t_max_digits10: " << std::numeric_limits<Real_t>::max_digits10
+       << "\n";
+   out << "compiler: " << __VERSION__ << "\n";
+#ifdef __OPTIMIZE__
+   out << "optimize: true\n";
+#else
+   out << "optimize: false\n";
+#endif
+#if _OPENMP
+   out << "openmp: " << _OPENMP << "\n";
+#else
+   out << "openmp: 0\n";
+#endif
+   out << "use_mpi: " << USE_MPI << "\n";
+   out << "git_hash: " << GetGitHash() << "\n";
+   out << "build_flags_env: " << GetEnvString("LULESH_BUILD_FLAGS") << "\n";
+   out << "log_root: " << cfg.root << "\n";
+   out << "log_stride: " << cfg.stride << "\n";
+   out << "log_enabled: " << (cfg.enabled ? "true" : "false") << "\n";
+   out << "log_pre: " << (cfg.log_pre ? "true" : "false") << "\n";
+
+   if (!cfg.fields.empty()) {
+      std::ostringstream joined;
+      std::set<std::string>::const_iterator it = cfg.fields.begin();
+      for (; it != cfg.fields.end(); ++it) {
+         if (it != cfg.fields.begin()) {
+            joined << ",";
+         }
+         joined << *it;
+      }
+      out << "log_fields: " << joined.str() << "\n";
+   } else {
+      out << "log_fields: all\n";
+   }
+}
+
+static bool WriteCsvFromAccessor(const std::string& path,
+                                 Domain& domain,
+                                 Index_t count,
+                                 Index_t stride,
+                                 Real_t& (Domain::*accessor)(Index_t))
+{
+   if (count <= 0 || stride <= 0) {
+      return false;
+   }
+   std::ofstream out(path.c_str());
+   if (!out) {
+      return false;
+   }
+   lulesh_log::SetStreamPrecision<Real_t>(out);
+   for (Index_t i = 0; i < count; i += stride) {
+      out << (domain.*accessor)(i);
+      if (i + stride < count) {
+         out << "\n";
+      }
+   }
+   return true;
+}
+
+static void LogNodalFields(const LogConfig& cfg,
+                           Domain& domain,
+                           const std::string& step_name)
+{
+   std::string step_dir = lulesh_log::MakeStepDir(cfg.root, step_name, g_myRank);
+   std::string matrix_dir = lulesh_log::MakeMatrixDir(step_dir);
+   std::string info_dir = lulesh_log::MakeInfoDir(step_dir);
+   WriteInfoFile(cfg, domain, step_name, info_dir);
+
+   Index_t count = domain.numNode();
+   Index_t stride = cfg.stride;
+
+   if (ShouldLogField(cfg, "x")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "x"),
+                           domain, count, stride, &Domain::x);
+   }
+   if (ShouldLogField(cfg, "y")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "y"),
+                           domain, count, stride, &Domain::y);
+   }
+   if (ShouldLogField(cfg, "z")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "z"),
+                           domain, count, stride, &Domain::z);
+   }
+   if (ShouldLogField(cfg, "xd")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "xd"),
+                           domain, count, stride, &Domain::xd);
+   }
+   if (ShouldLogField(cfg, "yd")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "yd"),
+                           domain, count, stride, &Domain::yd);
+   }
+   if (ShouldLogField(cfg, "zd")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "zd"),
+                           domain, count, stride, &Domain::zd);
+   }
+   if (ShouldLogField(cfg, "xdd")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "xdd"),
+                           domain, count, stride, &Domain::xdd);
+   }
+   if (ShouldLogField(cfg, "ydd")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "ydd"),
+                           domain, count, stride, &Domain::ydd);
+   }
+   if (ShouldLogField(cfg, "zdd")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "zdd"),
+                           domain, count, stride, &Domain::zdd);
+   }
+   if (ShouldLogField(cfg, "fx")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "fx"),
+                           domain, count, stride, &Domain::fx);
+   }
+   if (ShouldLogField(cfg, "fy")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "fy"),
+                           domain, count, stride, &Domain::fy);
+   }
+   if (ShouldLogField(cfg, "fz")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "fz"),
+                           domain, count, stride, &Domain::fz);
+   }
+   if (ShouldLogField(cfg, "nodalMass")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "nodalMass"),
+                           domain, count, stride, &Domain::nodalMass);
+   }
+}
+
+static void LogElementFields(const LogConfig& cfg,
+                             Domain& domain,
+                             const std::string& step_name)
+{
+   std::string step_dir = lulesh_log::MakeStepDir(cfg.root, step_name, g_myRank);
+   std::string matrix_dir = lulesh_log::MakeMatrixDir(step_dir);
+   std::string info_dir = lulesh_log::MakeInfoDir(step_dir);
+   WriteInfoFile(cfg, domain, step_name, info_dir);
+
+   Index_t count = domain.numElem();
+   Index_t stride = cfg.stride;
+
+   if (ShouldLogField(cfg, "e")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "e"),
+                           domain, count, stride, &Domain::e);
+   }
+   if (ShouldLogField(cfg, "p")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "p"),
+                           domain, count, stride, &Domain::p);
+   }
+   if (ShouldLogField(cfg, "q")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "q"),
+                           domain, count, stride, &Domain::q);
+   }
+   if (ShouldLogField(cfg, "ql")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "ql"),
+                           domain, count, stride, &Domain::ql);
+   }
+   if (ShouldLogField(cfg, "qq")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "qq"),
+                           domain, count, stride, &Domain::qq);
+   }
+   if (ShouldLogField(cfg, "v")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "v"),
+                           domain, count, stride, &Domain::v);
+   }
+   if (ShouldLogField(cfg, "vnew")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "vnew"),
+                           domain, count, stride, &Domain::vnew);
+   }
+   if (ShouldLogField(cfg, "volo")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "volo"),
+                           domain, count, stride, &Domain::volo);
+   }
+   if (ShouldLogField(cfg, "delv")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "delv"),
+                           domain, count, stride, &Domain::delv);
+   }
+   if (ShouldLogField(cfg, "vdov")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "vdov"),
+                           domain, count, stride, &Domain::vdov);
+   }
+   if (ShouldLogField(cfg, "arealg")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "arealg"),
+                           domain, count, stride, &Domain::arealg);
+   }
+   if (ShouldLogField(cfg, "ss")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "ss"),
+                           domain, count, stride, &Domain::ss);
+   }
+   if (ShouldLogField(cfg, "elemMass")) {
+      WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "elemMass"),
+                           domain, count, stride, &Domain::elemMass);
+   }
+}
+
+static void LogTimeConstraintFields(const LogConfig& cfg,
+                                    Domain& domain,
+                                    const std::string& step_name)
+{
+   std::string step_dir = lulesh_log::MakeStepDir(cfg.root, step_name, g_myRank);
+   std::string matrix_dir = lulesh_log::MakeMatrixDir(step_dir);
+   std::string info_dir = lulesh_log::MakeInfoDir(step_dir);
+   WriteInfoFile(cfg, domain, step_name, info_dir);
+
+   if (ShouldLogField(cfg, "deltatime")) {
+      lulesh_log::WriteCsvScalar(JoinCsvPath(matrix_dir, "deltatime"),
+                                 domain.deltatime());
+   }
+   if (ShouldLogField(cfg, "dtcourant")) {
+      lulesh_log::WriteCsvScalar(JoinCsvPath(matrix_dir, "dtcourant"),
+                                 domain.dtcourant());
+   }
+   if (ShouldLogField(cfg, "dthydro")) {
+      lulesh_log::WriteCsvScalar(JoinCsvPath(matrix_dir, "dthydro"),
+                                 domain.dthydro());
+   }
+}
 
 static inline
 void TimeIncrement(Domain& domain)
@@ -2604,10 +3020,20 @@ void LagrangeLeapFrog(Domain& domain)
    Domain_member fieldData[6] ;
 #endif
 
+   const LogConfig& log_cfg = GetLogConfig();
+   const bool do_log = ShouldLogStep(log_cfg, domain);
+
+   if (do_log && log_cfg.log_pre) {
+      LogNodalFields(log_cfg, domain, "step0_pre_lagrange_nodal");
+   }
+
    /* calculate nodal forces, accelerations, velocities, positions, with
     * applied boundary conditions and slide surface considerations */
    LagrangeNodal(domain);
 
+   if (do_log) {
+      LogNodalFields(log_cfg, domain, "step1_post_lagrange_nodal");
+   }
 
 #ifdef SEDOV_SYNC_POS_VEL_LATE
 #endif
@@ -2615,6 +3041,10 @@ void LagrangeLeapFrog(Domain& domain)
    /* calculate element quantities (i.e. velocity gradient & q), and update
     * material states */
    LagrangeElements(domain, domain.numElem());
+
+   if (do_log) {
+      LogElementFields(log_cfg, domain, "step2_post_lagrange_elements");
+   }
 
 #if USE_MPI   
 #ifdef SEDOV_SYNC_POS_VEL_LATE
@@ -2636,6 +3066,11 @@ void LagrangeLeapFrog(Domain& domain)
 #endif   
 
    CalcTimeConstraintsForElems(domain);
+
+   if (do_log) {
+      LogTimeConstraintFields(log_cfg, domain,
+                              "step3_post_time_constraints");
+   }
 
 #if USE_MPI   
 #ifdef SEDOV_SYNC_POS_VEL_LATE
@@ -2678,6 +3113,9 @@ int main(int argc, char *argv[])
    myRank = 0;
 #endif   
 
+   g_myRank = myRank;
+   g_numRanks = numRanks;
+
    /* Set defaults that can be overridden by command line opts */
    opts.its = 9999999;
    opts.nx  = 30;
@@ -2690,6 +3128,8 @@ int main(int argc, char *argv[])
    opts.cost = 1;
 
    ParseCommandLineOptions(argc, argv, myRank, &opts);
+   g_cmdline_opts = opts;
+   g_cmdline_opts_set = true;
 
    if ((myRank == 0) && (opts.quiet == 0)) {
       std::cout << "Running problem size " << opts.nx << "^3 per domain until completion\n";
