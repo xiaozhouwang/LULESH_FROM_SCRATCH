@@ -1,0 +1,6 @@
+*.o
+*.dSYM
+lulesh2.0
+
+benchmarks/logs/
+benchmarks/*.txt
