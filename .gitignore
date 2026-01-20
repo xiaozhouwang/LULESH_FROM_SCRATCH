@@ -12,6 +12,8 @@ benchmarks/logs-hourglass/
 benchmarks/logs-gpu-hourglass/
 benchmarks/logs-*/
 benchmarks/*.txt
+benchmarks/speedup.csv
+benchmarks/speedup.png
 
 lulesh-gpu/
 lulesh-gpu-opt/

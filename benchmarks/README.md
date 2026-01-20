@@ -42,6 +42,14 @@ LOG_CYCLES=20 LOG_CYCLE_STRIDE=2 SIZE=20 ITERS=20 \
 This writes logs under `benchmarks/logs-multi/` and `benchmarks/logs-gpu-multi/`.
 Use `COMPARE_ARGS=--quiet` to suppress per-file output.
 
+## Benchmark speedup across sizes
+
+```
+python3 benchmarks/bench_speedup.py --sizes 30,50,70,90,110 --iterations 100 --cpu-threads 24 --plot
+```
+
+Outputs `benchmarks/speedup.csv` and `benchmarks/speedup.png`.
+
 Override tolerances if needed:
 
 ```
