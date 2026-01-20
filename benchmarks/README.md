@@ -32,6 +32,16 @@ python3 benchmarks/compare_logs.py \
   --precision double
 ```
 
+## Run multi-cycle compare (script)
+
+```
+LOG_CYCLES=20 LOG_CYCLE_STRIDE=2 SIZE=20 ITERS=20 \
+  benchmarks/run_multi_compare.sh
+```
+
+This writes logs under `benchmarks/logs-multi/` and `benchmarks/logs-gpu-multi/`.
+Use `COMPARE_ARGS=--quiet` to suppress per-file output.
+
 Override tolerances if needed:
 
 ```
