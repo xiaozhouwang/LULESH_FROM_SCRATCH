@@ -10,6 +10,7 @@ benchmarks/logs-substep/
 benchmarks/logs-gpu-substep/
 benchmarks/logs-hourglass/
 benchmarks/logs-gpu-hourglass/
+benchmarks/logs-*/
 benchmarks/*.txt
 
 lulesh-gpu/
