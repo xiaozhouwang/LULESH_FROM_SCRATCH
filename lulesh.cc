@@ -174,15 +174,20 @@ static bool g_cmdline_opts_set = false;
 struct LogConfig {
    bool enabled;
    bool log_pre;
+   bool log_substeps;
    Index_t max_cycle;
+   Index_t cycle_stride;
    Index_t stride;
    std::string root;
    std::set<std::string> fields;
+   std::set<Index_t> cycle_list;
 
    LogConfig()
       : enabled(false),
         log_pre(false),
+        log_substeps(false),
         max_cycle(1),
+        cycle_stride(1),
         stride(1),
         root(lulesh_log::DefaultLogRoot())
    {
@@ -244,6 +249,40 @@ static std::string TrimCopy(const std::string& input)
    return result;
 }
 
+static std::set<Index_t> ParseCycleList(const char* name)
+{
+   std::set<Index_t> cycles;
+   const char* value = getenv(name);
+   if (value == NULL || value[0] == '\0') {
+      return cycles;
+   }
+   std::string raw = TrimCopy(value);
+   if (raw.empty()) {
+      return cycles;
+   }
+   std::string::size_type start = 0;
+   while (start < raw.size()) {
+      std::string::size_type comma = raw.find(',', start);
+      std::string token = raw.substr(start,
+                                     (comma == std::string::npos) ? std::string::npos
+                                                                  : comma - start);
+      token = TrimCopy(token);
+      if (!token.empty()) {
+         char* end = NULL;
+         long parsed = strtol(token.c_str(), &end, 10);
+         if (end != token.c_str() && *end == '\0' && parsed > 0 &&
+             parsed <= std::numeric_limits<Index_t>::max()) {
+            cycles.insert(static_cast<Index_t>(parsed));
+         }
+      }
+      if (comma == std::string::npos) {
+         break;
+      }
+      start = comma + 1;
+   }
+   return cycles;
+}
+
 static std::set<std::string> ParseFields()
 {
    std::set<std::string> fields;
@@ -280,8 +319,11 @@ static const LogConfig& GetLogConfig()
    if (!initialized) {
       cfg.enabled = EnvEnabled("LULESH_LOG_ENABLE");
       cfg.log_pre = EnvEnabled("LULESH_LOG_PRE");
+      cfg.log_substeps = EnvEnabled("LULESH_LOG_SUBSTEPS");
       cfg.max_cycle = ParseMaxCycle("LULESH_LOG_CYCLES");
+      cfg.cycle_stride = ParseStride("LULESH_LOG_CYCLE_STRIDE");
       cfg.stride = ParseStride("LULESH_LOG_STRIDE");
+      cfg.cycle_list = ParseCycleList("LULESH_LOG_CYCLE_LIST");
       cfg.fields = ParseFields();
       const char* root = getenv("LULESH_LOG_ROOT");
       if (root != NULL && root[0] != '\0') {
@@ -302,7 +344,23 @@ static bool ShouldLogField(const LogConfig& cfg, const std::string& name)
 
 static bool ShouldLogStep(const LogConfig& cfg, Domain& domain)
 {
-   return cfg.enabled && domain.cycle() >= 1 && domain.cycle() <= cfg.max_cycle;
+   if (!cfg.enabled) {
+      return false;
+   }
+   Index_t cycle = domain.cycle();
+   if (cycle < 1) {
+      return false;
+   }
+   if (!cfg.cycle_list.empty()) {
+      return cfg.cycle_list.find(cycle) != cfg.cycle_list.end();
+   }
+   if (cycle > cfg.max_cycle) {
+      return false;
+   }
+   if (cfg.cycle_stride <= 1) {
+      return true;
+   }
+   return ((cycle - 1) % cfg.cycle_stride) == 0;
 }
 
 static std::string StepNameWithCycle(const std::string& base, Index_t cycle)
@@ -411,9 +469,25 @@ static void WriteInfoFile(const LogConfig& cfg,
    out << "log_root: " << cfg.root << "\n";
    out << "log_stride: " << cfg.stride << "\n";
    out << "log_cycles: " << cfg.max_cycle << "\n";
+   out << "log_cycle_stride: " << cfg.cycle_stride << "\n";
    out << "log_enabled: " << (cfg.enabled ? "true" : "false") << "\n";
    out << "log_pre: " << (cfg.log_pre ? "true" : "false") << "\n";
+   out << "log_substeps: " << (cfg.log_substeps ? "true" : "false") << "\n";
    out << "cycle: " << domain.cycle() << "\n";
+
+   if (!cfg.cycle_list.empty()) {
+      std::ostringstream joined;
+      std::set<Index_t>::const_iterator it = cfg.cycle_list.begin();
+      for (; it != cfg.cycle_list.end(); ++it) {
+         if (it != cfg.cycle_list.begin()) {
+            joined << ",";
+         }
+         joined << *it;
+      }
+      out << "log_cycle_list: " << joined.str() << "\n";
+   } else {
+      out << "log_cycle_list: none\n";
+   }
 
    if (!cfg.fields.empty()) {
       std::ostringstream joined;
@@ -582,6 +656,95 @@ static void LogElementFields(const LogConfig& cfg,
    if (ShouldLogField(cfg, "elemMass")) {
       WriteCsvFromAccessor(JoinCsvPath(matrix_dir, "elemMass"),
                            domain, count, stride, &Domain::elemMass);
+   }
+}
+
+static void LogHourglassArrays(const LogConfig& cfg,
+                               Domain& domain,
+                               const std::string& step_name,
+                               const Real_t* dvdx,
+                               const Real_t* dvdy,
+                               const Real_t* dvdz,
+                               const Real_t* x8n,
+                               const Real_t* y8n,
+                               const Real_t* z8n,
+                               Index_t count)
+{
+   bool any = ShouldLogField(cfg, "dvdx") || ShouldLogField(cfg, "dvdy") ||
+              ShouldLogField(cfg, "dvdz") || ShouldLogField(cfg, "x8n") ||
+              ShouldLogField(cfg, "y8n") || ShouldLogField(cfg, "z8n");
+   if (!any) {
+      return;
+   }
+
+   std::string step_dir = lulesh_log::MakeStepDir(cfg.root, step_name, g_myRank);
+   std::string matrix_dir = lulesh_log::MakeMatrixDir(step_dir);
+   std::string info_dir = lulesh_log::MakeInfoDir(step_dir);
+   WriteInfoFile(cfg, domain, step_name, info_dir);
+
+   std::size_t size = static_cast<std::size_t>(count);
+   std::size_t stride = static_cast<std::size_t>(cfg.stride);
+
+   if (ShouldLogField(cfg, "dvdx")) {
+      lulesh_log::WriteCsvArray(JoinCsvPath(matrix_dir, "dvdx"),
+                                dvdx, size, stride);
+   }
+   if (ShouldLogField(cfg, "dvdy")) {
+      lulesh_log::WriteCsvArray(JoinCsvPath(matrix_dir, "dvdy"),
+                                dvdy, size, stride);
+   }
+   if (ShouldLogField(cfg, "dvdz")) {
+      lulesh_log::WriteCsvArray(JoinCsvPath(matrix_dir, "dvdz"),
+                                dvdz, size, stride);
+   }
+   if (ShouldLogField(cfg, "x8n")) {
+      lulesh_log::WriteCsvArray(JoinCsvPath(matrix_dir, "x8n"),
+                                x8n, size, stride);
+   }
+   if (ShouldLogField(cfg, "y8n")) {
+      lulesh_log::WriteCsvArray(JoinCsvPath(matrix_dir, "y8n"),
+                                y8n, size, stride);
+   }
+   if (ShouldLogField(cfg, "z8n")) {
+      lulesh_log::WriteCsvArray(JoinCsvPath(matrix_dir, "z8n"),
+                                z8n, size, stride);
+   }
+}
+
+static void LogHourglassForces(const LogConfig& cfg,
+                               Domain& domain,
+                               const std::string& step_name,
+                               const Real_t* hgfx,
+                               const Real_t* hgfy,
+                               const Real_t* hgfz,
+                               Index_t count)
+{
+   bool any = ShouldLogField(cfg, "hgfx") ||
+              ShouldLogField(cfg, "hgfy") ||
+              ShouldLogField(cfg, "hgfz");
+   if (!any) {
+      return;
+   }
+
+   std::string step_dir = lulesh_log::MakeStepDir(cfg.root, step_name, g_myRank);
+   std::string matrix_dir = lulesh_log::MakeMatrixDir(step_dir);
+   std::string info_dir = lulesh_log::MakeInfoDir(step_dir);
+   WriteInfoFile(cfg, domain, step_name, info_dir);
+
+   std::size_t size = static_cast<std::size_t>(count);
+   std::size_t stride = static_cast<std::size_t>(cfg.stride);
+
+   if (ShouldLogField(cfg, "hgfx")) {
+      lulesh_log::WriteCsvArray(JoinCsvPath(matrix_dir, "hgfx"),
+                                hgfx, size, stride);
+   }
+   if (ShouldLogField(cfg, "hgfy")) {
+      lulesh_log::WriteCsvArray(JoinCsvPath(matrix_dir, "hgfy"),
+                                hgfy, size, stride);
+   }
+   if (ShouldLogField(cfg, "hgfz")) {
+      lulesh_log::WriteCsvArray(JoinCsvPath(matrix_dir, "hgfz"),
+                                hgfz, size, stride);
    }
 }
 
@@ -1166,6 +1329,12 @@ void CalcFBHourglassForceForElems( Domain &domain,
 #else
    Index_t numthreads = 1;
 #endif
+   const LogConfig& log_cfg = GetLogConfig();
+   const bool log_hgforces = ShouldLogStep(log_cfg, domain) &&
+                             log_cfg.log_substeps &&
+                             (ShouldLogField(log_cfg, "hgfx") ||
+                              ShouldLogField(log_cfg, "hgfy") ||
+                              ShouldLogField(log_cfg, "hgfz"));
    /*************************************************
     *
     *     FUNCTION: Calculates the Flanagan-Belytschko anti-hourglass
@@ -1178,11 +1347,19 @@ void CalcFBHourglassForceForElems( Domain &domain,
    Real_t *fx_elem; 
    Real_t *fy_elem; 
    Real_t *fz_elem; 
+   Real_t *hgfx_log = NULL;
+   Real_t *hgfy_log = NULL;
+   Real_t *hgfz_log = NULL;
 
    if(numthreads > 1) {
       fx_elem = Allocate<Real_t>(numElem8) ;
       fy_elem = Allocate<Real_t>(numElem8) ;
       fz_elem = Allocate<Real_t>(numElem8) ;
+   }
+   if (log_hgforces) {
+      hgfx_log = Allocate<Real_t>(numElem8) ;
+      hgfy_log = Allocate<Real_t>(numElem8) ;
+      hgfz_log = Allocate<Real_t>(numElem8) ;
    }
 
    Real_t  gamma[4][8];
@@ -1341,6 +1518,14 @@ void CalcFBHourglassForceForElems( Domain &domain,
                       hourgam,
                       coefficient, hgfx, hgfy, hgfz);
 
+      if (log_hgforces) {
+         for (Index_t ii = 0; ii < 8; ++ii) {
+            hgfx_log[i3 + ii] = hgfx[ii];
+            hgfy_log[i3 + ii] = hgfy[ii];
+            hgfz_log[i3 + ii] = hgfz[ii];
+         }
+      }
+
       // With the threaded version, we write into local arrays per elem
       // so we don't have to worry about race conditions
       if (numthreads > 1) {
@@ -1429,9 +1614,18 @@ void CalcFBHourglassForceForElems( Domain &domain,
          domain.fy(gnode) += fy_tmp ;
          domain.fz(gnode) += fz_tmp ;
       }
-      Release(&fz_elem) ;
-      Release(&fy_elem) ;
-      Release(&fx_elem) ;
+     Release(&fz_elem) ;
+     Release(&fy_elem) ;
+     Release(&fx_elem) ;
+   }
+   if (log_hgforces) {
+      LogHourglassForces(log_cfg, domain,
+                         StepNameWithCycle("step1a1b_hourglass_forces",
+                                           domain.cycle()),
+                         hgfx_log, hgfy_log, hgfz_log, numElem8);
+      Release(&hgfz_log);
+      Release(&hgfy_log);
+      Release(&hgfx_log);
    }
 }
 
@@ -1485,6 +1679,16 @@ void CalcHourglassControlForElems(Domain& domain,
       }
    }
 
+   {
+      const LogConfig& log_cfg = GetLogConfig();
+      if (ShouldLogStep(log_cfg, domain) && log_cfg.log_substeps) {
+         LogHourglassArrays(log_cfg, domain,
+                            StepNameWithCycle("step1a1a_hourglass_inputs",
+                                              domain.cycle()),
+                            dvdx, dvdy, dvdz, x8n, y8n, z8n, numElem8);
+      }
+   }
+
    if ( hgcoef > Real_t(0.) ) {
       CalcFBHourglassForceForElems( domain,
                                     determ, x8n, y8n, z8n, dvdx, dvdy, dvdz,
@@ -1508,6 +1712,9 @@ void CalcVolumeForceForElems(Domain& domain)
 {
    Index_t numElem = domain.numElem() ;
    if (numElem != 0) {
+      const LogConfig& log_cfg = GetLogConfig();
+      const bool do_log = ShouldLogStep(log_cfg, domain);
+      const Index_t log_cycle = domain.cycle();
       Real_t  hgcoef = domain.hgcoef() ;
       Real_t *sigxx  = Allocate<Real_t>(numElem) ;
       Real_t *sigyy  = Allocate<Real_t>(numElem) ;
@@ -1522,6 +1729,11 @@ void CalcVolumeForceForElems(Domain& domain)
       IntegrateStressForElems( domain,
                                sigxx, sigyy, sigzz, determ, numElem,
                                domain.numNode()) ;
+      if (do_log && log_cfg.log_substeps) {
+         LogNodalFields(log_cfg, domain,
+                        StepNameWithCycle("step1a1_post_integrate_stress",
+                                          log_cycle));
+      }
 
       // check for negative element volume
 #pragma omp parallel for firstprivate(numElem)
@@ -1674,10 +1886,17 @@ void LagrangeNodal(Domain& domain)
 
    const Real_t delt = domain.deltatime() ;
    Real_t u_cut = domain.u_cut() ;
+   const LogConfig& log_cfg = GetLogConfig();
+   const bool do_log = ShouldLogStep(log_cfg, domain);
+   const Index_t log_cycle = domain.cycle();
 
   /* time of boundary condition evaluation is beginning of step for force and
    * acceleration boundary conditions. */
   CalcForceForNodes(domain);
+  if (do_log && log_cfg.log_substeps) {
+     LogNodalFields(log_cfg, domain,
+                    StepNameWithCycle("step1a_post_force", log_cycle));
+  }
 
 #if USE_MPI  
 #ifdef SEDOV_SYNC_POS_VEL_EARLY
@@ -1688,12 +1907,28 @@ void LagrangeNodal(Domain& domain)
 #endif
    
    CalcAccelerationForNodes(domain, domain.numNode());
+   if (do_log && log_cfg.log_substeps) {
+      LogNodalFields(log_cfg, domain,
+                     StepNameWithCycle("step1b_post_accel", log_cycle));
+   }
    
    ApplyAccelerationBoundaryConditionsForNodes(domain);
+   if (do_log && log_cfg.log_substeps) {
+      LogNodalFields(log_cfg, domain,
+                     StepNameWithCycle("step1c_post_accel_bc", log_cycle));
+   }
 
    CalcVelocityForNodes( domain, delt, u_cut, domain.numNode()) ;
+   if (do_log && log_cfg.log_substeps) {
+      LogNodalFields(log_cfg, domain,
+                     StepNameWithCycle("step1d_post_velocity", log_cycle));
+   }
 
    CalcPositionForNodes( domain, delt, domain.numNode() );
+   if (do_log && log_cfg.log_substeps) {
+      LogNodalFields(log_cfg, domain,
+                     StepNameWithCycle("step1e_post_position", log_cycle));
+   }
 #if USE_MPI
 #ifdef SEDOV_SYNC_POS_VEL_EARLY
   fieldData[0] = &Domain::x ;
