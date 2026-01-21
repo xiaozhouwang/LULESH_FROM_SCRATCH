@@ -4,7 +4,7 @@ This repo now includes a CUDA GPU port, logging hooks for CPU/GPU validation,
 and benchmark utilities for speedup and correctness plots.
 
 **Highlights**
-- GPU port lives under `lulesh-gpu-opt/lulesh-cuda` and builds `lulesh_gpu`.
+- GPU port lives under `lulesh-cuda` and builds `lulesh_cuda`.
 - Logging and comparison tooling lives under `benchmarks/`.
 - CPU/GPU correctness checks are supported with per-cycle CSV logs and a
   tolerance-based comparator.
@@ -19,10 +19,8 @@ make -j CXX="g++ -DUSE_MPI=0"
 
 GPU:
 ```
-cd lulesh-gpu-opt/lulesh-cuda
-nvcc -std=c++14 -O3 -arch=sm_89 \
-  lulesh.cu lulesh-util.cu lulesh-viz.cu lulesh-init.cu \
-  -o lulesh_gpu
+cd lulesh-cuda
+./build.sh
 ```
 
 ## Logging and Correctness Validation
@@ -59,18 +57,24 @@ Outputs:
 
 ## Recorded Results (Current Runs)
 
-Correctness (size 110 sampled run, 10 cycles, stride 100, fields fx/fy/fz/e):
+Sample outputs from local runs on this machine; regenerate with the scripts
+above to match your hardware and settings.
+
+Sample correctness (size 110 sampled run, 10 cycles, stride 100, fields fx/fy/fz/e):
 - Max abs diff: 5.96e-08 (cycle 6)
 - Max rel diff: 3.28e-13 (cycle 4)
 - Out-of-bounds count: 0 across all cycles
 - Plot: `benchmarks/correctness.png`
 
-Multi-cycle correctness (20 cycles, stride 2):
+Multi-cycle correctness (size 20, 10 cycles, stride 1):
 - 1290 files compared, 0 failures
-- Logs: `benchmarks/logs-multi/cycles20-s2` and
-  `benchmarks/logs-gpu-multi/cycles20-s2`
+- Max abs diff: 3.73e-08 (cycle 9)
+- Max rel diff: 1.0 (near-zero values)
+- Plot: `benchmarks/analysis/correctness_multi_c10_s20.png`
+- Logs: `benchmarks/logs-multi/cycles10-s1` and
+  `benchmarks/logs-gpu-multi/cycles10-s1`
 
-Speedup sweep (CPU threads=24, iterations=100):
+Sample speedup sweep (CPU threads=24, iterations=100):
 - N=30: ~6.67x
 - N=50: ~7.41x
 - N=70: ~9.42x
@@ -78,7 +82,7 @@ Speedup sweep (CPU threads=24, iterations=100):
 - N=110: ~11.98x
 - Plot: `benchmarks/speedup.png`
 
-Example baseline (size 110, iterations 100):
+Sample baseline (size 110, iterations 100):
 - CPU: ~20.0s, FOM ~6592.5
 - GPU: ~1.69s, FOM ~78971.2
 - Speedup: ~11.8x

@@ -72,7 +72,7 @@ def main() -> int:
     parser.add_argument("--cpu-bin", default=os.path.join(root_dir, "lulesh2.0"))
     parser.add_argument(
         "--gpu-bin",
-        default=os.path.join(root_dir, "lulesh-gpu-opt", "lulesh-cuda", "lulesh_gpu"),
+        default=os.path.join(root_dir, "lulesh-cuda", "build", "lulesh_cuda"),
     )
     parser.add_argument(
         "--out",

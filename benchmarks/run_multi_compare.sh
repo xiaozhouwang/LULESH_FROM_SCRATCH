@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 CPU_BIN="${CPU_BIN:-${ROOT_DIR}/lulesh2.0}"
-GPU_BIN="${GPU_BIN:-${ROOT_DIR}/lulesh-gpu-opt/lulesh-cuda/lulesh_gpu}"
+GPU_BIN="${GPU_BIN:-${ROOT_DIR}/lulesh-cuda/build/lulesh_cuda}"
 
 LOG_CYCLES="${LOG_CYCLES:-10}"
 LOG_CYCLE_STRIDE="${LOG_CYCLE_STRIDE:-1}"
