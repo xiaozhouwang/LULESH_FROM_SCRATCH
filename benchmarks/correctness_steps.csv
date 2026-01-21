@@ -1,0 +1,13 @@
+step,cycle,max_abs,max_rel,oob,files_compared
+step0_pre_lagrange_nodal_cycle1_rank0,1,0.0,0.0,0,13
+step1_post_lagrange_nodal_cycle1_rank0,1,0.0,0.0,0,13
+step1a1_post_integrate_stress_cycle1_rank0,1,0.0,0.0,0,13
+step1a1a_hourglass_inputs_cycle1_rank0,1,1.8431436932253575e-16,5.825244265008248e-14,0,6
+step1a1b_hourglass_forces_cycle1_rank0,1,0.0,0.0,0,3
+step1a_post_force_cycle1_rank0,1,0.0,0.0,0,13
+step1b_post_accel_cycle1_rank0,1,0.0,0.0,0,13
+step1c_post_accel_bc_cycle1_rank0,1,0.0,0.0,0,13
+step1d_post_velocity_cycle1_rank0,1,0.0,0.0,0,13
+step1e_post_position_cycle1_rank0,1,0.0,0.0,0,13
+step2_post_lagrange_elements_cycle1_rank0,1,3.3306690738754696e-16,1.0,0,13
+step3_post_time_constraints_cycle1_rank0,1,0.0,0.0,0,3

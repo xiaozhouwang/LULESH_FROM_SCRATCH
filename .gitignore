@@ -15,11 +15,6 @@ benchmarks/logs_cpu/
 benchmarks/logs_gpu/
 benchmarks/analysis/
 benchmarks/*.txt
-benchmarks/speedup.csv
-benchmarks/speedup.png
-benchmarks/correctness.csv
-benchmarks/correctness_steps.csv
-benchmarks/correctness.png
 
 lulesh-gpu/
 lulesh-gpu-opt/
