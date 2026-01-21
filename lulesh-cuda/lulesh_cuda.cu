@@ -2100,10 +2100,10 @@ __global__ void KernelEvalEOS(Index_t numElem, const Real_t* vnew,
     }
 
     Real_t c1s = Real_t(2.0) / Real_t(3.0);
-    Real_t bvc = c1s * (compression + Real_t(1.0));
     Real_t pbvc = c1s;
+    Real_t bvcHalf = c1s * (compHalfStep + Real_t(1.0));
 
-    Real_t pHalfStep = bvc * e_new;
+    Real_t pHalfStep = bvcHalf * e_new;
     if (fabs(pHalfStep) < p_cut) {
       pHalfStep = Real_t(0.0);
     }
@@ -2119,7 +2119,7 @@ __global__ void KernelEvalEOS(Index_t numElem, const Real_t* vnew,
       q_new = Real_t(0.0);
     } else {
       Real_t vhalf = Real_t(1.0) / (Real_t(1.0) + compHalfStep);
-      Real_t ssc = (pbvc * e_new + vhalf * vhalf * bvc * pHalfStep) / rho0;
+      Real_t ssc = (pbvc * e_new + vhalf * vhalf * bvcHalf * pHalfStep) / rho0;
       if (ssc <= Real_t(.1111111e-36)) {
         ssc = Real_t(.3333333e-18);
       } else {
@@ -2140,6 +2140,7 @@ __global__ void KernelEvalEOS(Index_t numElem, const Real_t* vnew,
       e_new = emin;
     }
 
+    Real_t bvc = c1s * (compression + Real_t(1.0));
     Real_t p_new = bvc * e_new;
     if (fabs(p_new) < p_cut) {
       p_new = Real_t(0.0);
@@ -2275,19 +2276,31 @@ static void BuildNodeElementLists(Domain& domain,
                                   std::vector<Index_t>& nodeElemCornerList)
 {
   Index_t numNode = domain.numNode();
+  Index_t numElem = domain.numElem();
+  std::vector<Index_t> nodeElemCount(numNode, 0);
+  for (Index_t i = 0; i < numElem; ++i) {
+    Index_t* nl = domain.nodelist(i);
+    for (Index_t j = 0; j < 8; ++j) {
+      ++nodeElemCount[nl[j]];
+    }
+  }
+
   nodeElemStart.resize(numNode + 1);
   nodeElemStart[0] = 0;
   for (Index_t i = 0; i < numNode; ++i) {
-    Index_t count = domain.nodeElemCount(i);
-    nodeElemStart[i + 1] = nodeElemStart[i] + count;
+    nodeElemStart[i + 1] = nodeElemStart[i] + nodeElemCount[i];
   }
+
   nodeElemCornerList.resize(nodeElemStart[numNode]);
-  for (Index_t i = 0; i < numNode; ++i) {
-    Index_t count = domain.nodeElemCount(i);
-    Index_t* corners = domain.nodeElemCornerList(i);
-    Index_t start = nodeElemStart[i];
-    for (Index_t j = 0; j < count; ++j) {
-      nodeElemCornerList[start + j] = corners[j];
+  std::fill(nodeElemCount.begin(), nodeElemCount.end(), 0);
+  for (Index_t i = 0; i < numElem; ++i) {
+    Index_t* nl = domain.nodelist(i);
+    for (Index_t j = 0; j < 8; ++j) {
+      Index_t m = nl[j];
+      Index_t k = i * 8 + j;
+      Index_t offset = nodeElemStart[m] + nodeElemCount[m];
+      nodeElemCornerList[offset] = k;
+      ++nodeElemCount[m];
     }
   }
 }
