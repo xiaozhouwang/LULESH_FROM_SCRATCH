@@ -64,6 +64,10 @@ iterations for steadier speedup numbers or use external timing.
 Sample outputs from local runs on this machine; regenerate with the scripts
 above to match your hardware and settings.
 
+Hardware (this machine):
+- CPU: Intel(R) Core(TM) i9-14900K (24 cores, 32 threads)
+- GPU: NVIDIA GeForce RTX 4090 (49140 MiB, compute capability 8.9, driver 580.82.07)
+
 Sample correctness (size 110 sampled run, 10 cycles, stride 100, fields fx/fy/fz/e):
 - Max abs diff: 5.96e-08 (cycle 6)
 - Max rel diff: 3.28e-13 (cycle 4)

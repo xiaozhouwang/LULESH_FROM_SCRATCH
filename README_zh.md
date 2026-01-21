@@ -58,6 +58,10 @@ python3 benchmarks/bench_speedup.py --sizes 30,50,70,90,110 \
 
 以下为本机样例结果；请按你的硬件与设置重新生成。
 
+硬件（本机）：
+- CPU: Intel(R) Core(TM) i9-14900K（24 核，32 线程）
+- GPU: NVIDIA GeForce RTX 4090（49140 MiB，计算能力 8.9，驱动 580.82.07）
+
 示例正确性（size 110 抽样运行, 10 cycles, stride 100, fields fx/fy/fz/e）：
 - Max abs diff: 5.96e-08 (cycle 6)
 - Max rel diff: 3.28e-13 (cycle 4)
