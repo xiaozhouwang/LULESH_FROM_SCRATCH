@@ -1,37 +1,34 @@
-# LULESH 2.0 (CPU + GPU Validation + Benchmarks)
+# LULESH 2.0（CPU + GPU 验证 + 基准测试）
 
-This repo now includes a CUDA GPU port, logging hooks for CPU/GPU validation,
-and benchmark utilities for speedup and correctness plots.
+本仓库包含 CUDA GPU 版本、用于 CPU/GPU 验证的日志钩子，以及用于加速比与正确性绘图的基准工具。
 
-**Highlights**
-- GPU port lives under `lulesh-cuda` and builds `lulesh_cuda`.
-- Logging and comparison tooling lives under `benchmarks/`.
-- CPU/GPU correctness checks are supported with per-cycle CSV logs and a
-  tolerance-based comparator.
-- Speedup and correctness plots are generated from the collected results.
+**要点**
+- GPU 版本位于 `lulesh-cuda`，生成 `lulesh_cuda`。
+- 日志与对比工具位于 `benchmarks/`。
+- 支持按周期输出 CSV 并基于容差比较的 CPU/GPU 正确性检查。
+- 可从采集结果生成加速比与正确性图。
 
-## Build
+## 构建
 
-CPU (serial/OpenMP, no MPI):
+CPU（串行/OpenMP，无 MPI）：
 ```
 make -j CXX="g++ -DUSE_MPI=0"
 ```
 
-GPU:
+GPU：
 ```
 cd lulesh-cuda
 ./build.sh
 ```
 
-## Logging and Correctness Validation
+## 日志与正确性验证
 
-Key helpers:
-- `benchmarks/compare_logs.py` compares CPU/GPU CSV logs with tolerances.
-- `benchmarks/run_multi_compare.sh` runs CPU + GPU and compares logs.
-- `benchmarks/plot_correctness.py` summarizes diffs by cycle and plots them.
+关键工具：
+- `benchmarks/compare_logs.py`：对 CPU/GPU CSV 日志进行容差比较。
+- `benchmarks/run_multi_compare.sh`：运行 CPU + GPU 并对比日志。
+- `benchmarks/plot_correctness.py`：按周期汇总差异并绘图。
 
-Example sampled correctness run (size 110, 10 cycles, stride 100, fields
-fx/fy/fz/e):
+示例抽样正确性运行（size 110, 10 cycles, stride 100, fields fx/fy/fz/e）：
 ```
 LULESH_LOG_STRIDE=100 LOG_CYCLES=10 LOG_CYCLE_STRIDE=1 SIZE=110 ITERS=10 \
 LOG_FIELDS=fx,fy,fz,e LOG_PRE=1 LOG_SUBSTEPS=0 \
@@ -43,34 +40,31 @@ python3 benchmarks/plot_correctness.py --plot \
   --allow-missing
 ```
 
-## Benchmarking and Speedup Plots
+## 基准与加速比图
 
-Speedup sweep script:
+加速比批量脚本：
 ```
 python3 benchmarks/bench_speedup.py --sizes 30,50,70,90,110 \
   --iterations 100 --cpu-threads 24 --plot
 ```
 
-Outputs:
+输出：
 - `benchmarks/speedup.csv`
 - `benchmarks/speedup.png`
 
-Note: LULESH prints elapsed time with 2 significant digits and times only the
-main timestep loop (GPU excludes setup/copy), so prefer larger sizes or more
-iterations for steadier speedup numbers or use external timing.
+注意：LULESH 的 elapsed time 只保留 2 位有效数字，且只计主循环时间（GPU 不包含初始化与拷贝），建议用更大的规模或更多迭代来获得更稳定的加速比，或使用外部计时。
 
-## Recorded Results (Current Runs)
+## 当前运行记录结果
 
-Sample outputs from local runs on this machine; regenerate with the scripts
-above to match your hardware and settings.
+以下为本机样例结果；请按你的硬件与设置重新生成。
 
-Sample correctness (size 110 sampled run, 10 cycles, stride 100, fields fx/fy/fz/e):
+示例正确性（size 110 抽样运行, 10 cycles, stride 100, fields fx/fy/fz/e）：
 - Max abs diff: 5.96e-08 (cycle 6)
 - Max rel diff: 3.28e-13 (cycle 4)
 - Out-of-bounds count: 0 across all cycles
 - Plot: `benchmarks/correctness.png`
 
-Multi-cycle correctness (size 40, 10 cycles, stride 1):
+多周期正确性（size 40, 10 cycles, stride 1）：
 - 1290 files compared, 0 failures
 - Max abs diff: 4.77e-07 (cycle 4)
 - Max rel diff: 1.0 (near-zero values)
@@ -78,7 +72,7 @@ Multi-cycle correctness (size 40, 10 cycles, stride 1):
 - Logs: `benchmarks/logs-multi/cycles10-s1` and
   `benchmarks/logs-gpu-multi/cycles10-s1`
 
-Sample speedup sweep (CPU threads=24, iterations=100):
+示例加速比批量结果（CPU threads=24, iterations=100）：
 - N=30: ~37.04x
 - N=50: ~29.17x
 - N=70: ~27.78x
@@ -86,12 +80,12 @@ Sample speedup sweep (CPU threads=24, iterations=100):
 - N=110: ~33.33x
 - Plot: `benchmarks/speedup.png`
 
-Sample baseline (size 110, iterations 100):
+示例基线（size 110, iterations 100）：
 - CPU: ~21.0s, FOM ~6467.8
 - GPU: ~0.63s, FOM ~212521.4
 - Speedup: ~33.3x
 
-## Original README (verbatim)
+## 原始 README（原文）
 
 ```
 This is the README for LULESH 2.0
